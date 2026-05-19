@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Movie Search</title>
+  <link rel="stylesheet" href="./css/style.css" />
+  <script type="module" src="./js/main.js"></script>
+</head>
+<body>
+
+  <!-- ── Search card ───────────────────────────────────────────── -->
+  <div class="container">
+    <header>
+      <h1>Movie Search</h1>
+      <p>Search by Movie ID, IMDB ID (tt…) or title</p>
+    </header>
+
+    <div class="search-form">
+      <label class="field-label" for="searchInput">Search</label>
+      <div class="search-row">
+        <input
+          type="text"
+          id="searchInput"
+          placeholder="e.g. 1, tt0076759, Toy Story"
+          autocomplete="off"
+        />
+        <button type="button" id="btnSearch" class="btn">Search</button>
+      </div>
+      <div id="searchMsg" class="msg-box" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- ── Loading overlay ──────────────────────────────────────── -->
+  <div id="loadingOverlay" hidden>
+    <div class="loading-spinner"></div>
+    <p class="loading-text">Searching…</p>
+  </div>
+
+  <!-- ── Results list ─────────────────────────────────────────── -->
+  <div class="results-section" id="resultsSection" hidden>
+    <div class="results-header">
+      <h2 class="movies-heading">
+        Results
+        <span class="results-count" id="resultsCount"></span>
+      </h2>
+    </div>
+
+    <table class="ratings-table" id="resultsTable">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Title</th>
+          <th>Year</th>
+          <th>Genre</th>
+          <th>Director</th>
+          <th>IMDb</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+
+    <div class="ratings-pagination" id="resultsPagination" style="display:none"></div>
+  </div>
+
+  <!-- ── Movie detail ─────────────────────────────────────────── -->
+  <section class="movie-detail subtitle-section" id="movieDetail" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Movie Detail</span>
+      <button class="section-toggle" data-target="movieDetailContent">−</button>
+    </div>
+    <div id="movieDetailContent" class="movie-detail-content">
+      <div class="detail-sidebar">
+        <img class="detail-poster" id="detailPoster" src="" alt="" />
+        <div class="detail-ratings" id="detailRatings"></div>
+      </div>
+      <div class="detail-body">
+        <h2 class="detail-title" id="detailTitle"></h2>
+        <div class="detail-meta">
+          <div class="detail-col">
+            <div class="meta-item"><span class="meta-label">Year</span><span id="detailYear"></span></div>
+            <div class="meta-item"><span class="meta-label">Released</span><span id="detailReleased"></span></div>
+            <div class="meta-item"><span class="meta-label">Runtime</span><span id="detailRuntime"></span></div>
+            <div class="meta-item"><span class="meta-label">Country</span><span id="detailCountry"></span></div>
+            <div class="meta-item"><span class="meta-label">Language</span><span id="detailLanguage"></span></div>
+          </div>
+          <div class="detail-col">
+            <div class="meta-item"><span class="meta-label">Genre</span><span id="detailGenre"></span></div>
+            <div class="meta-item"><span class="meta-label">Director</span><span id="detailDirector"></span></div>
+            <div class="meta-item"><span class="meta-label">Writer</span><span id="detailWriter"></span></div>
+            <div class="meta-item"><span class="meta-label">Cast</span><span id="detailCast"></span></div>
+            <div class="meta-item"><span class="meta-label">Awards</span><span id="detailAwards"></span></div>
+          </div>
+        </div>
+        <div id="detailPeople" class="detail-people"></div>
+        <div id="detailGenresTags" class="detail-genres-tags"></div>
+        <div class="detail-plot">
+          <span class="meta-label">Plot</span>
+          <p id="detailPlot"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Subtitle: Raw SRT ────────────────────────────────────── -->
+  <section class="subtitle-section" id="subtitleRaw" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Subtitle</span>
+      <button class="section-toggle" data-target="subtitleRawContent">−</button>
+    </div>
+    <div id="subtitleRawContent" class="subtitle-content">
+      <div class="subtitle-lang-selector">
+        <label><input type="radio" name="subtitleLang" value="EN" checked /> English Subtitle</label>
+        <label><input type="radio" name="subtitleLang" value="PTBR" /> Portuguese Subtitle</label>
+        <div class="subtitle-goto">
+          <label for="subtitleGotoInput">Go to dialogue:</label>
+          <input type="number" id="subtitleGotoInput" min="1" placeholder="№" />
+          <button type="button" id="subtitleGotoBtn" class="btn btn--sm">GO</button>
+        </div>
+      </div>
+      <textarea id="subtitleRawText" rows="10" readonly></textarea>
+    </div>
+  </section>
+
+  <!-- ── Subtitle: Themes ────────────────────────────────────── -->
+  <section class="subtitle-section" id="subtitleThemes" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Movie Themes</span>
+      <button class="section-toggle" data-target="subtitleThemesContent">−</button>
+    </div>
+    <div id="subtitleThemesContent" class="subtitle-content"></div>
+  </section>
+
+  <!-- ── Subtitle: Initcap ────────────────────────────────────── -->
+  <section class="subtitle-section" id="subtitleInitcap" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Named Entities (Initcap)</span>
+      <button class="section-toggle" data-target="subtitleInitcapContent">−</button>
+    </div>
+    <div id="subtitleInitcapContent" class="subtitle-content"></div>
+  </section>
+
+  <!-- ── Subtitle: Geo ────────────────────────────────────────── -->
+  <section class="subtitle-section" id="subtitleGeo" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Geographic Locations</span>
+      <button class="section-toggle" data-target="subtitleGeoContent">−</button>
+    </div>
+    <div id="subtitleGeoContent" class="subtitle-content"></div>
+  </section>
+
+  <!-- ── Subtitle: Region Expression ─────────────────────────── -->
+  <section class="subtitle-section" id="subtitleReg" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Region Expression</span>
+      <button class="section-toggle" data-target="subtitleRegContent">−</button>
+    </div>
+    <div id="subtitleRegContent" class="subtitle-content"></div>
+  </section>
+
+</body>
+</html>
