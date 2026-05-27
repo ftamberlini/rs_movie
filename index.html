@@ -158,5 +158,47 @@
     <div id="subtitleRegContent" class="subtitle-content"></div>
   </section>
 
+  <!-- ── Minorities Data (Oracle, tabbed) ────────────────────── -->
+  <section class="subtitle-section" id="minoritiesData" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Minorities Data</span>
+      <button class="section-toggle" data-target="minoritiesDataContent">−</button>
+    </div>
+    <div id="minoritiesDataContent" class="subtitle-content">
+      <div class="tab-bar">
+        <button class="tab-btn tab-btn--active" data-mdtab="mdRacism">Racism</button>
+        <button class="tab-btn" data-mdtab="mdWomen">Women</button>
+        <button class="tab-btn" data-mdtab="mdXenophobia">Xenophobia</button>
+        <button class="tab-btn" data-mdtab="mdReligion">Religion</button>
+        <button class="tab-btn" data-mdtab="mdAbleism">Ableism</button>
+      </div>
+      <div id="mdRacism"     class="tab-panel"></div>
+      <div id="mdWomen"      class="tab-panel" hidden></div>
+      <div id="mdXenophobia" class="tab-panel" hidden></div>
+      <div id="mdReligion"   class="tab-panel" hidden></div>
+      <div id="mdAbleism"    class="tab-panel" hidden></div>
+    </div>
+  </section>
+
+  <!-- ── Subtitle Data (Oracle, tabbed) ─────────────────────── -->
+  <section class="subtitle-section" id="subtitleData" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Subtitle Data</span>
+      <button class="section-toggle" data-target="subtitleDataContent">−</button>
+    </div>
+    <div id="subtitleDataContent" class="subtitle-content">
+      <div class="tab-bar">
+        <button class="tab-btn tab-btn--active" data-tab="sdThemes">Movie Themes</button>
+        <button class="tab-btn" data-tab="sdGeo">Geo</button>
+        <button class="tab-btn" data-tab="sdInitcap">Initcap</button>
+        <button class="tab-btn" data-tab="sdRegions">Regions</button>
+      </div>
+      <div id="sdThemes"  class="tab-panel"></div>
+      <div id="sdGeo"     class="tab-panel" hidden></div>
+      <div id="sdInitcap" class="tab-panel" hidden></div>
+      <div id="sdRegions" class="tab-panel" hidden></div>
+    </div>
+  </section>
+
 </body>
 </html>

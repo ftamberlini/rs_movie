@@ -2,3 +2,6 @@
 __pycache__/
 old
 subtitle
+oracle/
+.devcontainer
+oracle

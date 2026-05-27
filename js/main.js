@@ -355,7 +355,7 @@ function renderGenresTags(genresImdb, genresMl, tags) {
 
 // ── Subtitle sections ────────────────────────────────────────────────────────
 
-const SUBTITLE_SECTIONS = ['subtitleRaw', 'subtitleThemes', 'subtitleInitcap', 'subtitleGeo', 'subtitleReg'];
+const SUBTITLE_SECTIONS = ['subtitleRaw', 'subtitleThemes', 'subtitleInitcap', 'subtitleGeo', 'subtitleReg', 'minoritiesData', 'subtitleData'];
 
 const IDIOM_LABELS = {
   'EN':    'English',
@@ -523,12 +523,31 @@ async function loadSubtitleRaw(imdbId, lang) {
   }
 }
 
+async function updateSubtitleTooltips(imdbId) {
+  const radios = [...document.querySelectorAll('input[name="subtitleLang"]')];
+  const results = await Promise.all(radios.map(async r => {
+    try {
+      const res = await fetch(`/subtitle/${encodeURIComponent(imdbId)}/${encodeURIComponent(r.value)}/count`);
+      return res.ok ? await res.json() : { count: 0, available: false };
+    } catch {
+      return { count: 0, available: false };
+    }
+  }));
+  radios.forEach((radio, i) => {
+    const label = radio.closest('label');
+    if (!label) return;
+    const { count, available } = results[i];
+    label.title = available ? `${count.toLocaleString()} dialogues` : 'Subtitle not available';
+  });
+}
+
 function renderSubtitleRaw(imdbId) {
   const section = document.getElementById('subtitleRaw');
   if (!imdbId) { section.hidden = true; return; }
   document.querySelectorAll('input[name="subtitleLang"]').forEach(r => { r.checked = r.value === 'EN'; });
   _resetSection(section);
   loadSubtitleRaw(imdbId, 'EN');
+  updateSubtitleTooltips(imdbId);
 }
 
 document.querySelectorAll('input[name="subtitleLang"]').forEach(radio => {
@@ -576,10 +595,208 @@ document.getElementById('subtitleGotoInput').addEventListener('keydown', e => {
 function renderSubtitleData(movie) {
   _currentImdbId = movie.imdb_id || '';
   renderSubtitleRaw(_currentImdbId);
-  renderSubtitleThemes('subtitleThemes',  movie.subtitle_themes);
-  renderSubtitleThemes('subtitleReg',     movie.subtitle_reg, 'Region / Word');
-  renderSubtitleList('subtitleInitcap', movie.subtitle_initcap, 'word',     'Word');
-  renderSubtitleList('subtitleGeo',     movie.subtitle_geo,     'location', 'Location');
+  initMinoritiesData(_currentImdbId);
+  initSubtitleData(_currentImdbId);
+}
+
+// ── Minorities Data — tabbed Oracle section ──────────────────────────────────
+
+const MD_TABS = ['mdRacism', 'mdWomen', 'mdXenophobia', 'mdReligion', 'mdAbleism'];
+const MD_SLUGS = { mdRacism: 'racism', mdWomen: 'women', mdXenophobia: 'xenophobia', mdReligion: 'religion', mdAbleism: 'ableism' };
+let _mdImdbId = '';
+let _mdCache  = {};
+
+document.querySelectorAll('[data-mdtab]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _activateMdTab(btn.dataset.mdtab);
+    _loadMdTab(btn.dataset.mdtab);
+  });
+});
+
+function _activateMdTab(tabId) {
+  document.querySelectorAll('[data-mdtab]').forEach(b =>
+    b.classList.toggle('tab-btn--active', b.dataset.mdtab === tabId));
+  MD_TABS.forEach(id => { document.getElementById(id).hidden = (id !== tabId); });
+}
+
+async function _loadMdTab(tabId) {
+  if (!_mdImdbId) return;
+  if (_mdCache[tabId] !== undefined) { _renderMdTab(tabId, _mdCache[tabId]); return; }
+
+  const panel = document.getElementById(tabId);
+  panel.innerHTML = '<div class="tab-loading">Loading…</div>';
+
+  try {
+    const res  = await fetch(`/minority-data/${encodeURIComponent(_mdImdbId)}/${MD_SLUGS[tabId]}`);
+    const data = await res.json();
+    _mdCache[tabId] = data;
+    _renderMdTab(tabId, data);
+  } catch {
+    _mdCache[tabId] = {};
+    document.getElementById(tabId).innerHTML = '<div class="tab-loading">(Error loading data)</div>';
+  }
+}
+
+function _renderMdTab(tabId, data) {
+  const panel = document.getElementById(tabId);
+  panel.innerHTML = '';
+  if (!data || Object.keys(data).length === 0) {
+    panel.innerHTML = '<div class="tab-loading">No data available.</div>';
+    return;
+  }
+  _renderSdThemes(panel, data, 'Category / Word');
+}
+
+function initMinoritiesData(imdbId) {
+  _mdImdbId = imdbId;
+  _mdCache  = {};
+  const section = document.getElementById('minoritiesData');
+  if (!imdbId) { section.hidden = true; return; }
+  _activateMdTab('mdRacism');
+  _resetSection(section);
+  _loadMdTab('mdRacism');
+}
+
+// ── Subtitle Data — tabbed Oracle section ────────────────────────────────────
+
+const SD_TABS = ['sdThemes', 'sdGeo', 'sdInitcap', 'sdRegions'];
+let _sdImdbId = '';
+let _sdCache  = {};
+
+document.querySelectorAll('[data-tab]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _activateTab(btn.dataset.tab);
+    _loadTab(btn.dataset.tab);
+  });
+});
+
+function _activateTab(tabId) {
+  document.querySelectorAll('[data-tab]').forEach(b =>
+    b.classList.toggle('tab-btn--active', b.dataset.tab === tabId));
+  SD_TABS.forEach(id => { document.getElementById(id).hidden = (id !== tabId); });
+}
+
+async function _loadTab(tabId) {
+  if (!_sdImdbId) return;
+  if (_sdCache[tabId] !== undefined) { _renderTab(tabId, _sdCache[tabId]); return; }
+
+  const panel = document.getElementById(tabId);
+  panel.innerHTML = '<div class="tab-loading">Loading…</div>';
+
+  const slug = { sdThemes: 'themes', sdGeo: 'geo', sdInitcap: 'initcap', sdRegions: 'regions' }[tabId];
+  try {
+    const res  = await fetch(`/subtitle-data/${encodeURIComponent(_sdImdbId)}/${slug}`);
+    const data = await res.json();
+    _sdCache[tabId] = data;
+    _renderTab(tabId, data);
+  } catch {
+    _sdCache[tabId] = {};
+    document.getElementById(tabId).innerHTML = '<div class="tab-loading">(Error loading data)</div>';
+  }
+}
+
+function _renderTab(tabId, data) {
+  const panel = document.getElementById(tabId);
+  panel.innerHTML = '';
+  if (!data || Object.keys(data).length === 0) {
+    panel.innerHTML = '<div class="tab-loading">No data available.</div>';
+    return;
+  }
+  if (tabId === 'sdThemes')  { _renderSdThemes(panel, data);                       return; }
+  if (tabId === 'sdGeo')     { _renderSdList(panel, data, 'location', 'Location'); return; }
+  if (tabId === 'sdInitcap') { _renderSdList(panel, data, 'word', 'Word');         return; }
+  if (tabId === 'sdRegions') { _renderSdGrouped(panel, data);                      return; }
+}
+
+function _renderSdThemes(panel, data, groupLabel = 'Theme / Word') {
+  for (const [idiom, themes] of Object.entries(data)) {
+    const wrap = buildIdiomBlock(idiom);
+    const table = document.createElement('table');
+    table.className = 'subtitle-table';
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    hr.appendChild(makeTh(groupLabel));
+    hr.appendChild(makeTh('Occurrences', 'count-th'));
+    hr.appendChild(makeTh('Dialogues', 'dialogues-th'));
+    thead.appendChild(hr); table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    for (const [theme, words] of Object.entries(themes)) {
+      const thRow = document.createElement('tr');
+      thRow.className = 'subtitle-theme-row';
+      const td = document.createElement('td'); td.colSpan = 3; td.textContent = theme;
+      thRow.appendChild(td); tbody.appendChild(thRow);
+      for (const { word, count, dialogues } of words) {
+        const tr = document.createElement('tr');
+        tr.appendChild(makeTd(word, 'subtitle-word'));
+        tr.appendChild(makeTd(count, 'count-cell'));
+        tr.appendChild(makeDialoguesTd(dialogues));
+        tbody.appendChild(tr);
+      }
+    }
+    table.appendChild(tbody); wrap.appendChild(table); panel.appendChild(wrap);
+  }
+}
+
+function _renderSdList(panel, data, keyProp, keyLabel) {
+  for (const [idiom, items] of Object.entries(data)) {
+    const wrap = buildIdiomBlock(idiom);
+    const table = document.createElement('table');
+    table.className = 'subtitle-table';
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    hr.appendChild(makeTh(keyLabel));
+    hr.appendChild(makeTh('Occurrences', 'count-th'));
+    hr.appendChild(makeTh('Dialogues', 'dialogues-th'));
+    thead.appendChild(hr); table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    for (const item of items) {
+      const tr = document.createElement('tr');
+      tr.appendChild(makeTd(item[keyProp]));
+      tr.appendChild(makeTd(item.count, 'count-cell'));
+      tr.appendChild(makeDialoguesTd(item.dialogues));
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody); wrap.appendChild(table); panel.appendChild(wrap);
+  }
+}
+
+function _renderSdGrouped(panel, data) {
+  for (const [idiom, regions] of Object.entries(data)) {
+    const wrap = buildIdiomBlock(idiom);
+    const table = document.createElement('table');
+    table.className = 'subtitle-table';
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    hr.appendChild(makeTh('Region / Word'));
+    hr.appendChild(makeTh('Occurrences', 'count-th'));
+    hr.appendChild(makeTh('Dialogues', 'dialogues-th'));
+    thead.appendChild(hr); table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    for (const [region, words] of Object.entries(regions)) {
+      const rRow = document.createElement('tr');
+      rRow.className = 'subtitle-theme-row';
+      const td = document.createElement('td'); td.colSpan = 3; td.textContent = region;
+      rRow.appendChild(td); tbody.appendChild(rRow);
+      for (const { word, count, dialogues } of words) {
+        const tr = document.createElement('tr');
+        tr.appendChild(makeTd(word, 'subtitle-word'));
+        tr.appendChild(makeTd(count, 'count-cell'));
+        tr.appendChild(makeDialoguesTd(dialogues));
+        tbody.appendChild(tr);
+      }
+    }
+    table.appendChild(tbody); wrap.appendChild(table); panel.appendChild(wrap);
+  }
+}
+
+function initSubtitleData(imdbId) {
+  _sdImdbId = imdbId;
+  _sdCache  = {};
+  const section = document.getElementById('subtitleData');
+  if (!imdbId) { section.hidden = true; return; }
+  _activateTab('sdThemes');
+  _resetSection(section);
+  _loadTab('sdThemes');
 }
 
 function hideSubtitleSections() {
