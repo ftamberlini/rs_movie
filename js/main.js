@@ -99,8 +99,9 @@ function renderResultsTable(movies, total, page) {
     const tdPoster = document.createElement('td');
     const img = document.createElement('img');
     img.className = 'poster-thumb';
-    img.src = m.poster || POSTER_PLACEHOLDER;
-    img.alt = m.title;
+    img.src   = m.poster || POSTER_PLACEHOLDER;
+    img.alt   = m.title;
+    img.title = `Movie ID: ${m.id}${m.imdb_id ? ' | IMDB: ' + m.imdb_id : ''}`;
     img.loading = 'lazy';
     img.onerror = () => { img.onerror = null; img.src = POSTER_PLACEHOLDER; };
     tdPoster.appendChild(img);
@@ -220,7 +221,8 @@ async function showMovieDetail(movieid) {
 
 function populateDetail(movie) {
   const detailPoster = document.getElementById('detailPoster');
-  detailPoster.alt = movie.title;
+  detailPoster.alt   = movie.title;
+  detailPoster.title = `Movie ID: ${movie.id}${movie.imdb_id ? ' | IMDB: ' + movie.imdb_id : ''}`;
   detailPoster.onerror = () => { detailPoster.onerror = null; detailPoster.src = POSTER_PLACEHOLDER; };
   detailPoster.src = movie.poster || POSTER_PLACEHOLDER;
 
@@ -238,9 +240,9 @@ function populateDetail(movie) {
   document.getElementById('detailPlot').textContent     = movie.plot;
 
   renderRatings(movie.ratings);
-  renderPeople(movie.directors, movie.writers);
   renderGenresTags(movie.genres_imdb, movie.genres_ml, movie.tags);
   renderSubtitleData(movie);
+  initCrewData(movie.id);
 }
 
 // ── Ratings badges ───────────────────────────────────────────────────────────
@@ -283,46 +285,155 @@ function renderRatings(ratings) {
   });
 }
 
-// ── People ───────────────────────────────────────────────────────────────────
+// ── Detail Crew ──────────────────────────────────────────────────────────────
 
-function renderPeople(directors, writers) {
-  const container = document.getElementById('detailPeople');
-  container.innerHTML = '';
+const CREW_TABS = ['crewDirectors', 'crewWriters', 'crewCast'];
 
-  function capitalize(text) {
-    return text.toLowerCase().split(' ')
-      .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+const PERSON_PLACEHOLDER = `data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="160">' +
+  '<rect width="120" height="160" fill="#e0ddd8"/>' +
+  '<text x="60" y="85" text-anchor="middle" fill="#aaa" font-family="sans-serif" font-size="11">Unavailable</text>' +
+  '</svg>'
+)}`;
+
+document.querySelectorAll('[data-crewtab]').forEach(btn => {
+  btn.addEventListener('click', () => _activateCrewTab(btn.dataset.crewtab));
+});
+
+function _activateCrewTab(tabId) {
+  document.querySelectorAll('[data-crewtab]').forEach(b =>
+    b.classList.toggle('tab-btn--active', b.dataset.crewtab === tabId));
+  CREW_TABS.forEach(id => { document.getElementById(id).hidden = (id !== tabId); });
+}
+
+function _buildCrewCard(person, horizontal = false) {
+  const card = document.createElement('div');
+  card.className = 'crew-card' + (horizontal ? ' crew-card--horizontal' : '');
+
+  // Photo
+  const img = document.createElement('img');
+  img.className = 'crew-photo';
+  img.alt     = person.name || '';
+  img.title   = person.person_id || '';
+  img.loading = 'lazy';
+  img.onerror = () => { img.onerror = null; img.src = PERSON_PLACEHOLDER; };
+  img.src     = person.photo || PERSON_PLACEHOLDER;
+  card.appendChild(img);
+
+  // Info block
+  const info = document.createElement('div');
+  info.className = 'crew-info';
+
+  const nameEl = document.createElement('div');
+  nameEl.className   = 'crew-name';
+  nameEl.textContent = person.name || '—';
+  info.appendChild(nameEl);
+
+  const FIELDS = [
+    ['Category',     person.category],
+    ['Job',          person.job],
+    ['Characters',   person.characters],
+    ['Gender (LLM)', person.gender_llm],
+    ['Gender (API)', person.gender_api],
+    ['Nationality',  person.nationality],
+    ['Race',         person.race],
+    ['Ethnicity',    person.ethnicity],
+    ['Religion',     person.religion],
+    ['Born',         [person.birthdate, person.birthlocation].filter(Boolean).join(' · ')],
+  ];
+
+  const fieldsGrid = document.createElement('div');
+  fieldsGrid.className = 'crew-fields';
+
+  FIELDS.forEach(([label, value]) => {
+    if (!value) return;
+    const row = document.createElement('div');
+    row.className = 'crew-field';
+    const lbl = document.createElement('span');
+    lbl.className   = 'crew-field-label';
+    lbl.textContent = label;
+    const val = document.createElement('span');
+    val.className   = 'crew-field-value';
+    val.textContent = value;
+    row.appendChild(lbl);
+    row.appendChild(val);
+    fieldsGrid.appendChild(row);
+  });
+
+  info.appendChild(fieldsGrid);
+
+  // Biography (máx 300 chars + botão expandir)
+  if (person.biography) {
+    const BIO_LIMIT = 300;
+    const bio = document.createElement('div');
+    bio.className = 'crew-bio';
+
+    if (person.biography.length <= BIO_LIMIT) {
+      bio.textContent = person.biography;
+    } else {
+      const shortSpan = document.createElement('span');
+      shortSpan.textContent = person.biography.slice(0, BIO_LIMIT);
+
+      const restSpan = document.createElement('span');
+      restSpan.textContent = person.biography.slice(BIO_LIMIT);
+      restSpan.hidden = true;
+
+      const expandBtn = document.createElement('button');
+      expandBtn.className   = 'bio-expand-btn';
+      expandBtn.title       = 'Show full biography';
+      expandBtn.textContent = ' …';
+      expandBtn.addEventListener('click', () => {
+        restSpan.hidden = false;
+        expandBtn.remove();
+      });
+
+      bio.appendChild(shortSpan);
+      bio.appendChild(expandBtn);
+      bio.appendChild(restSpan);
+    }
+
+    info.appendChild(bio);
   }
 
-  [['Directors', directors], ['Writers', writers]].forEach(([label, people]) => {
-    if (!people || people.length === 0) return;
+  card.appendChild(info);
+  return card;
+}
 
-    const group = document.createElement('div');
-    group.className = 'people-group';
+function _renderCrewPanel(panelId, people, horizontal = false) {
+  const panel = document.getElementById(panelId);
+  panel.innerHTML = '';
+  if (!people || people.length === 0) {
+    panel.innerHTML = '<div class="tab-loading">No data available.</div>';
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'crew-grid' + (horizontal ? ' crew-grid--horizontal' : '');
+  people.forEach(p => grid.appendChild(_buildCrewCard(p, horizontal)));
+  panel.appendChild(grid);
+}
 
-    const heading = document.createElement('span');
-    heading.className   = 'meta-label';
-    heading.textContent = label;
-    group.appendChild(heading);
+async function initCrewData(movieid) {
+  const section = document.getElementById('detailCrew');
+  if (!movieid) { section.hidden = true; return; }
 
-    people.forEach(p => {
-      const attrs = ['gender', 'race', 'nationality', 'ethnicity', 'religion']
-        .filter(k => p[k]).map(k => p[k].toLowerCase()).join(' · ');
-
-      const line = document.createElement('div');
-      line.className = 'person-line';
-
-      const nameSpan = document.createElement('span');
-      nameSpan.className   = 'person-line-name';
-      nameSpan.textContent = capitalize(p.name || '');
-      line.appendChild(nameSpan);
-
-      if (attrs) line.appendChild(document.createTextNode(' — ' + attrs));
-      group.appendChild(line);
-    });
-
-    container.appendChild(group);
+  _activateCrewTab('crewDirectors');
+  CREW_TABS.forEach((id, i) => {
+    document.getElementById(id).innerHTML = '<div class="tab-loading">Loading…</div>';
+    document.getElementById(id).hidden    = (i !== 0);
   });
+  _resetSection(section);
+
+  try {
+    const res  = await fetch(`/crew/${encodeURIComponent(movieid)}`);
+    const data = await res.json();
+    _renderCrewPanel('crewDirectors', data.directors, true);
+    _renderCrewPanel('crewWriters',   data.writers,   true);
+    _renderCrewPanel('crewCast',      data.cast,      false);
+  } catch {
+    CREW_TABS.forEach(id => {
+      document.getElementById(id).innerHTML = '<div class="tab-loading">(Error loading data)</div>';
+    });
+  }
 }
 
 // ── Genres & Tags ─────────────────────────────────────────────────────────────
@@ -355,7 +466,7 @@ function renderGenresTags(genresImdb, genresMl, tags) {
 
 // ── Subtitle sections ────────────────────────────────────────────────────────
 
-const SUBTITLE_SECTIONS = ['subtitleRaw', 'subtitleThemes', 'subtitleInitcap', 'subtitleGeo', 'subtitleReg', 'minoritiesData', 'subtitleData'];
+const SUBTITLE_SECTIONS = ['detailCrew', 'subtitleRaw', 'subtitleThemes', 'subtitleInitcap', 'subtitleGeo', 'subtitleReg', 'minoritiesData', 'subtitleData'];
 
 const IDIOM_LABELS = {
   'EN':    'English',

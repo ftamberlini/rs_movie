@@ -92,13 +92,30 @@
             <div class="meta-item"><span class="meta-label">Awards</span><span id="detailAwards"></span></div>
           </div>
         </div>
-        <div id="detailPeople" class="detail-people"></div>
         <div id="detailGenresTags" class="detail-genres-tags"></div>
         <div class="detail-plot">
           <span class="meta-label">Plot</span>
           <p id="detailPlot"></p>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ── Detail Crew ──────────────────────────────────────────── -->
+  <section class="subtitle-section" id="detailCrew" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Detail Crew</span>
+      <button class="section-toggle" data-target="detailCrewContent">−</button>
+    </div>
+    <div id="detailCrewContent" class="subtitle-content">
+      <div class="tab-bar">
+        <button class="tab-btn tab-btn--active" data-crewtab="crewDirectors">Directors</button>
+        <button class="tab-btn"                 data-crewtab="crewWriters">Writers</button>
+        <button class="tab-btn"                 data-crewtab="crewCast">Cast</button>
+      </div>
+      <div id="crewDirectors" class="tab-panel crew-panel"></div>
+      <div id="crewWriters"   class="tab-panel crew-panel" hidden></div>
+      <div id="crewCast"      class="tab-panel crew-panel" hidden></div>
     </div>
   </section>
 

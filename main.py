@@ -219,6 +219,7 @@ def _build_list_item(movieid: str, r: dict) -> dict:
     ml_score   = _clean(ml.get("RATING_ML"))
     return {
         "id":      movieid,
+        "imdb_id": _imdb_id_of(r),
         "title":   _clean(r.get("TITLE", "")),
         "year":    _clean(r.get("YEAR", "")),
         "genre":   _clean(r.get("GENRE", "")),
@@ -240,7 +241,7 @@ def _do_search(query: str, page: int = 1, per_page: int = 20) -> tuple[list, int
     # 2. IMDB tt-id (e.g. tt0076759)
     if re.match(r"^tt\d+", q, re.IGNORECASE):
         rows = _oracle_query(
-            "SELECT * FROM MOVIE_IMDB WHERE LOWER(IMDB_ID) = :imdb",
+            "SELECT * FROM MOVIE_IMDB WHERE LOWER(IMDBID) = :imdb",
             {"imdb": q.lower()},
         )
         return [(str(r["MOVIEID"]), r) for r in rows], len(rows)
@@ -265,13 +266,26 @@ def _do_search(query: str, page: int = 1, per_page: int = 20) -> tuple[list, int
 # ---------------------------------------------------------------------------
 
 def _oracle_query(sql: str, params: dict | None = None) -> list[dict]:
-    cur = _get_conn().cursor()
+    global _conn
+
+    def _run(conn):
+        cur = conn.cursor()
+        try:
+            cur.execute(sql, params or {})
+            cols = [c[0] for c in cur.description] if cur.description else []
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+        finally:
+            cur.close()
+
     try:
-        cur.execute(sql, params or {})
-        cols = [c[0] for c in cur.description] if cur.description else []
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
-    finally:
-        cur.close()
+        return _run(_get_conn())
+    except (oracledb.InterfaceError, oracledb.DatabaseError) as e:
+        # DPY-1001: not connected  |  DPY-4011: connection closed by server
+        if any(code in str(e) for code in ("DPY-1001", "DPY-4011")):
+            logging.warning("Conexão perdida (%s), reconectando...", e)
+            _conn = None
+            return _run(_get_conn())
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +418,128 @@ async def minority_data(imdbid: str, topic: str):
          .setdefault(r["CATEGORY"], [])
          .append({"word": r["WORD"], "count": r["COUNT"], "dialogues": r["DIALOGUES"] or ""}))
     return JSONResponse(result)
+
+
+@app.get("/crew/{movieid}")
+async def crew_detail(movieid: str):
+    mid = int(movieid)
+
+    directors = _oracle_query("""
+        SELECT d.DIRECTORID AS PERSON_ID,
+               d.NAME, d.GENDER AS GENDER_LLM, d.RACE, d.NATIONALITY, d.ETHNICITY, d.RELIGION,
+               o.PRIMARYIMAGEURL, o.GENDER AS GENDER_API, o.BIRTHDATE, o.BIRTHLOCATION, o.BIOGRAPHY
+        FROM DIRECTOR d
+        JOIN MOVIE_DIRECTOR md ON d.DIRECTORID = md.DIRECTORID
+        LEFT JOIN OUTPUT_DIRECTOR o ON o.DIRECTORID = d.DIRECTORID
+        WHERE md.MOVIEID = :mid
+    """, {"mid": mid})
+
+    writers = _oracle_query("""
+        SELECT w.WRITERID AS PERSON_ID,
+               w.NAME, w.GENDER AS GENDER_LLM, w.RACE, w.NATIONALITY, w.ETHNICITY, w.RELIGION,
+               o.PRIMARYIMAGEURL, o.GENDER AS GENDER_API, o.BIRTHDATE, o.BIRTHLOCATION, o.BIOGRAPHY
+        FROM WRITER w
+        JOIN MOVIE_WRITER mw ON w.WRITERID = mw.WRITERID
+        LEFT JOIN OUTPUT_WRITER o ON o.WRITERID = w.WRITERID
+        WHERE mw.MOVIEID = :mid
+    """, {"mid": mid})
+
+    cast = _oracle_query("""
+        SELECT c.NCONST AS PERSON_ID,
+               c.PRIMARYNAME AS NAME, NULL AS GENDER_LLM, NULL AS RACE, NULL AS NATIONALITY,
+               NULL AS ETHNICITY, NULL AS RELIGION,
+               o.PRIMARYIMAGEURL, o.GENDER AS GENDER_API, o.BIRTHDATE, o.BIRTHLOCATION, o.BIOGRAPHY,
+               mc.CATEGORY, mc.JOB, mc.CHARACTERS
+        FROM CAST c
+        JOIN MOVIE_CAST mc ON c.NCONST = mc.NCONST
+        LEFT JOIN OUTPUT_CAST o ON o.NCONST = c.NCONST
+        WHERE mc.IMDBID = (SELECT IMDBID FROM MOVIE_IMDB WHERE MOVIEID = :mid)
+          AND mc.CATEGORY NOT IN ('director', 'writer')
+        ORDER BY mc.ORDERING
+    """, {"mid": mid})
+
+    def _read_lob(val):
+        """Lê CLOB/LOB se necessário, senão converte direto para str."""
+        if val is None:
+            return ""
+        if hasattr(val, "read"):
+            return val.read()
+        return str(val)
+
+    def _chars_to_list(val) -> list[str]:
+        """Converte JSON array '["Woody","Rex"]' → ['Woody', 'Rex'].
+        Se já for string simples, retorna lista com um elemento."""
+        s = _clean(str(val) if val is not None else "")
+        if not s:
+            return []
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if x]
+        except (ValueError, TypeError):
+            pass
+        return [s]
+
+    def _dedupe_cast(rows: list[dict]) -> list[dict]:
+        """Agrupa linhas do cast pelo PERSON_ID (NCONST), concatenando
+        CATEGORY, JOB e CHARACTERS distintos sem repetição."""
+        seen: dict[str, dict] = {}
+        order: list[str] = []
+
+        for r in rows:
+            pid = r.get("PERSON_ID") or r.get("NAME") or ""
+            if pid not in seen:
+                entry = dict(r)
+                entry["_cats"]  = [c for c in [_clean(r.get("CATEGORY"))] if c]
+                entry["_jobs"]  = [j for j in [_clean(r.get("JOB"))]      if j]
+                entry["_chars"] = _chars_to_list(r.get("CHARACTERS"))
+                seen[pid] = entry
+                order.append(pid)
+            else:
+                entry = seen[pid]
+                cat = _clean(r.get("CATEGORY"))
+                if cat and cat not in entry["_cats"]:
+                    entry["_cats"].append(cat)
+                job = _clean(r.get("JOB"))
+                if job and job not in entry["_jobs"]:
+                    entry["_jobs"].append(job)
+                for ch in _chars_to_list(r.get("CHARACTERS")):
+                    if ch not in entry["_chars"]:
+                        entry["_chars"].append(ch)
+
+        result = []
+        for pid in order:
+            entry = seen[pid]
+            entry["CATEGORY"]   = ", ".join(entry.pop("_cats"))
+            entry["JOB"]        = ", ".join(entry.pop("_jobs"))
+            entry["CHARACTERS"] = ", ".join(entry.pop("_chars"))
+            result.append(entry)
+        return result
+
+    def normalize(rows: list[dict]) -> list[dict]:
+        return [{
+            "person_id":     _clean(r.get("PERSON_ID")),
+            "name":          _clean(r.get("NAME")),
+            "gender_llm":    _clean(r.get("GENDER_LLM")),
+            "gender_api":    _clean(r.get("GENDER_API")),
+            "race":          _clean(r.get("RACE")),
+            "nationality":   _clean(r.get("NATIONALITY")),
+            "ethnicity":     _clean(r.get("ETHNICITY")),
+            "religion":      _clean(r.get("RELIGION")),
+            "photo":         _clean(r.get("PRIMARYIMAGEURL")),
+            "birthdate":     _clean(r.get("BIRTHDATE")),
+            "birthlocation": _clean(r.get("BIRTHLOCATION")),
+            "biography":     _clean(_read_lob(r.get("BIOGRAPHY"))),
+            "category":      _clean(r.get("CATEGORY")),
+            "job":           _clean(r.get("JOB")),
+            "characters":    _clean(r.get("CHARACTERS")),  # já parseado por _dedupe_cast
+        } for r in rows]
+
+    return JSONResponse({
+        "directors": normalize(directors),
+        "writers":   normalize(writers),
+        "cast":      normalize(_dedupe_cast(cast)),
+    })
 
 
 def _subtitle_path(imdbid: str, lang: str) -> Path:
