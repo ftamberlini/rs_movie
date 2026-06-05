@@ -101,10 +101,55 @@
     </div>
   </section>
 
-  <!-- ── Detail Crew ──────────────────────────────────────────── -->
+  <!-- ── Crew Diversity ──────────────────────────────────────── -->
+  <section class="subtitle-section" id="crewDiversity" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Crew Diversity</span>
+      <button class="section-toggle" data-target="crewDiversityContent">−</button>
+    </div>
+    <div id="crewDiversityContent" class="subtitle-content">
+      <table class="diversity-table">
+        <thead>
+          <tr>
+            <th class="div-row-label"></th>
+            <th>Director</th>
+            <th>Writer</th>
+            <th>Cast</th>
+          </tr>
+        </thead>
+        <tbody id="diversityBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Similar Movies ──────────────────────────────────────── -->
+  <section class="subtitle-section" id="similarMovies" hidden>
+    <div class="movie-detail-header">
+      <span class="movies-heading" style="margin:0">Similar Movies by User Ratings</span>
+      <button class="section-toggle" data-target="similarMoviesContent">−</button>
+    </div>
+    <div id="similarMoviesContent" class="subtitle-content">
+      <table class="ratings-table similar-table" id="similarTable">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Title</th>
+            <th>Year</th>
+            <th>Genre</th>
+            <th>ML Rating</th>
+            <th>Similarity</th>
+          </tr>
+        </thead>
+        <tbody id="similarBody"></tbody>
+      </table>
+      <div class="ratings-pagination" id="similarPagination" style="display:none"></div>
+    </div>
+  </section>
+
+  <!-- ── Crew Detail ──────────────────────────────────────────── -->
   <section class="subtitle-section" id="detailCrew" hidden>
     <div class="movie-detail-header">
-      <span class="movies-heading" style="margin:0">Detail Crew</span>
+      <span class="movies-heading" style="margin:0">Crew Detail</span>
       <button class="section-toggle" data-target="detailCrewContent">−</button>
     </div>
     <div id="detailCrewContent" class="subtitle-content">

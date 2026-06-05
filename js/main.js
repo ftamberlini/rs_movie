@@ -242,6 +242,8 @@ function populateDetail(movie) {
   renderRatings(movie.ratings);
   renderGenresTags(movie.genres_imdb, movie.genres_ml, movie.tags);
   renderSubtitleData(movie);
+  initDiversity(movie.id);
+  initSimilarMovies(movie.id);
   initCrewData(movie.id);
 }
 
@@ -285,7 +287,221 @@ function renderRatings(ratings) {
   });
 }
 
-// ── Detail Crew ──────────────────────────────────────────────────────────────
+// ── Crew Diversity ───────────────────────────────────────────────────────────
+
+const DIV_GENDER_ORDER = ['Male', 'Female', 'Unknown'];
+const DIV_AGE_ORDER    = ['Under 20','20-30','30-40','40-50','50-60','60-70','Over 70','Unknown'];
+
+const DIV_GENDER_CLASS = { Male: 'dc-male', Female: 'dc-female', Unknown: 'dc-unknown' };
+const DIV_AGE_CLASS    = {
+  'Under 20': 'dc-age-u20', '20-30': 'dc-age-20', '30-40': 'dc-age-30',
+  '40-50':    'dc-age-40',  '50-60': 'dc-age-50', '60-70': 'dc-age-60',
+  'Over 70':  'dc-age-o70', 'Unknown': 'dc-unknown',
+};
+
+function _divChip(label, count, cls) {
+  const chip = document.createElement('span');
+  chip.className   = `div-chip ${cls}`;
+  chip.textContent = `${label} (${count})`;
+  return chip;
+}
+
+function _divCell(counts, ordered, classFn) {
+  const wrap = document.createElement('div');
+  wrap.className = 'div-chips';
+  const keys = ordered
+    ? ordered.filter(k => counts[k])
+    : Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  keys.forEach(k => {
+    if (counts[k]) wrap.appendChild(_divChip(k, counts[k], classFn(k)));
+  });
+  if (!wrap.children.length) wrap.innerHTML = '<span class="div-chip dc-unknown">Unknown</span>';
+  return wrap;
+}
+
+function _divRow(label, dirData, wriData, castData, ordered, classFn) {
+  const tr = document.createElement('tr');
+  const th = document.createElement('th');
+  th.className   = 'div-row-label';
+  th.textContent = label;
+  tr.appendChild(th);
+  [dirData, wriData, castData].forEach(d => {
+    const td = document.createElement('td');
+    td.appendChild(_divCell(d || {}, ordered, classFn));
+    tr.appendChild(td);
+  });
+  return tr;
+}
+
+async function initDiversity(movieid) {
+  const section = document.getElementById('crewDiversity');
+  if (!movieid) { section.hidden = true; return; }
+
+  document.getElementById('diversityBody').innerHTML =
+    `<tr><td colspan="4" class="tab-loading">Loading…</td></tr>`;
+  _resetSection(section);
+
+  try {
+    const res  = await fetch(`/diversity/${encodeURIComponent(movieid)}`);
+    const data = await res.json();
+    _renderDiversityTable(data);
+  } catch {
+    document.getElementById('diversityBody').innerHTML =
+      `<tr><td colspan="4" class="tab-loading">(Error loading data)</td></tr>`;
+  }
+}
+
+function _renderDiversityTable(data) {
+  const tbody = document.getElementById('diversityBody');
+  tbody.innerHTML = '';
+
+  const d = data.director, w = data.writer, c = data.cast;
+  const neutral = k => 'dc-other';
+
+  tbody.appendChild(_divRow('Gender',      d.gender,      w.gender,      c.gender,      DIV_GENDER_ORDER, k => DIV_GENDER_CLASS[k] || 'dc-unknown'));
+  tbody.appendChild(_divRow('Race',        d.race,        w.race,        c.race,        null,             neutral));
+  tbody.appendChild(_divRow('Age',         d.age,         w.age,         c.age,         DIV_AGE_ORDER,    k => DIV_AGE_CLASS[k]    || 'dc-unknown'));
+  tbody.appendChild(_divRow('Nationality', d.nationality, w.nationality, c.nationality, null,             neutral));
+  tbody.appendChild(_divRow('Ethnicity',   d.ethnicity,   w.ethnicity,   c.ethnicity,   null,             neutral));
+}
+
+// ── Similar Movies ───────────────────────────────────────────────────────────
+
+const SIM_PER_PAGE = 5;
+let _simMovieId = '';
+let _simPage    = 1;
+let _simTotal   = 0;
+
+async function initSimilarMovies(movieid) {
+  const section = document.getElementById('similarMovies');
+  _simMovieId = movieid || '';
+  _simPage    = 1;
+
+  if (!_simMovieId) { section.hidden = true; return; }
+
+  document.getElementById('similarBody').innerHTML =
+    `<tr><td colspan="6" class="tab-loading">Loading…</td></tr>`;
+  document.getElementById('similarPagination').style.display = 'none';
+  _resetSection(section);
+
+  await _loadSimilarPage(1);
+}
+
+async function _loadSimilarPage(page) {
+  _simPage = page;
+  try {
+    const res  = await fetch(`/similar/${encodeURIComponent(_simMovieId)}?page=${page}&per_page=${SIM_PER_PAGE}`);
+    const data = await res.json();
+    _simTotal  = data.total;
+    _renderSimilarTable(data.movies);
+    _renderSimilarPagination(data.total, page);
+  } catch {
+    document.getElementById('similarBody').innerHTML =
+      `<tr><td colspan="6" class="tab-loading">(Error loading data)</td></tr>`;
+  }
+}
+
+function _renderSimilarTable(movies) {
+  const tbody = document.getElementById('similarBody');
+  tbody.innerHTML = '';
+
+  movies.forEach(m => {
+    const tr = document.createElement('tr');
+
+    // Poster
+    const tdPoster = document.createElement('td');
+    const img = document.createElement('img');
+    img.className = 'poster-thumb';
+    img.src     = m.poster || POSTER_PLACEHOLDER;
+    img.alt     = m.title;
+    img.title   = `Movie ID: ${m.id}${m.imdb_id ? ' | IMDB: ' + m.imdb_id : ''}`;
+    img.loading = 'lazy';
+    img.onerror = () => { img.onerror = null; img.src = POSTER_PLACEHOLDER; };
+    tdPoster.appendChild(img);
+
+    // Title
+    const tdTitle = document.createElement('td');
+    tdTitle.className   = 'title-cell';
+    tdTitle.textContent = m.title;
+
+    // Year
+    const tdYear = document.createElement('td');
+    tdYear.className   = 'year-cell';
+    tdYear.textContent = m.year;
+
+    // Genre (até 3 chips)
+    const tdGenre = document.createElement('td');
+    const genres  = (m.genre || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 3);
+    const wrap    = document.createElement('div');
+    wrap.className = 'chip-cell';
+    genres.forEach(g => {
+      const chip = document.createElement('span');
+      chip.className   = 'chip chip--genre';
+      chip.textContent = g;
+      wrap.appendChild(chip);
+    });
+    tdGenre.appendChild(wrap);
+
+    // ML Rating
+    const tdMl = document.createElement('td');
+    tdMl.className = 'imdb-cell';
+    if (m.ml) tdMl.innerHTML = `<strong>${m.ml}</strong>/5`;
+
+    // Similarity
+    const tdSim = document.createElement('td');
+    tdSim.className = 'sim-cell';
+    if (m.similarity) {
+      const pct = (parseFloat(m.similarity) * 100).toFixed(1);
+      tdSim.innerHTML = `<span class="sim-bar-wrap"><span class="sim-bar" style="width:${pct}%"></span></span><span class="sim-value">${m.similarity}</span>`;
+    }
+
+    tr.appendChild(tdPoster);
+    tr.appendChild(tdTitle);
+    tr.appendChild(tdYear);
+    tr.appendChild(tdGenre);
+    tr.appendChild(tdMl);
+    tr.appendChild(tdSim);
+
+    tr.addEventListener('click', async () => {
+      await showMovieDetail(m.id);
+      movieDetail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    tbody.appendChild(tr);
+  });
+}
+
+function _renderSimilarPagination(total, page) {
+  const el = document.getElementById('similarPagination');
+  const totalPages = Math.ceil(total / SIM_PER_PAGE);
+
+  if (totalPages <= 1) { el.style.display = 'none'; return; }
+
+  el.style.display = '';
+  el.innerHTML = '';
+
+  const btnPrev = document.createElement('button');
+  btnPrev.className   = 'btn btn--sm';
+  btnPrev.textContent = '‹ Prev';
+  btnPrev.disabled    = page === 1;
+  btnPrev.addEventListener('click', () => _loadSimilarPage(page - 1));
+
+  const info = document.createElement('span');
+  info.className   = 'pagination-info';
+  info.textContent = `${page} / ${totalPages}  (${total} movies)`;
+
+  const btnNext = document.createElement('button');
+  btnNext.className   = 'btn btn--sm';
+  btnNext.textContent = 'Next ›';
+  btnNext.disabled    = page >= totalPages;
+  btnNext.addEventListener('click', () => _loadSimilarPage(page + 1));
+
+  el.appendChild(btnPrev);
+  el.appendChild(info);
+  el.appendChild(btnNext);
+}
+
+// ── Crew Detail ──────────────────────────────────────────────────────────────
 
 const CREW_TABS = ['crewDirectors', 'crewWriters', 'crewCast'];
 
@@ -466,7 +682,7 @@ function renderGenresTags(genresImdb, genresMl, tags) {
 
 // ── Subtitle sections ────────────────────────────────────────────────────────
 
-const SUBTITLE_SECTIONS = ['detailCrew', 'subtitleRaw', 'subtitleThemes', 'subtitleInitcap', 'subtitleGeo', 'subtitleReg', 'minoritiesData', 'subtitleData'];
+const SUBTITLE_SECTIONS = ['crewDiversity', 'similarMovies', 'detailCrew', 'subtitleRaw', 'subtitleThemes', 'subtitleInitcap', 'subtitleGeo', 'subtitleReg', 'minoritiesData', 'subtitleData'];
 
 const IDIOM_LABELS = {
   'EN':    'English',

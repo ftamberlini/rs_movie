@@ -297,6 +297,167 @@ async def index():
     return FileResponse("index.html")
 
 
+@app.get("/diversity/{movieid}")
+async def crew_diversity(movieid: str):
+    mid = int(movieid)
+
+    movie_row = _oracle_query("SELECT YEAR FROM MOVIE_IMDB WHERE MOVIEID = :mid", {"mid": mid})
+    try:
+        movie_year = int(movie_row[0]["YEAR"]) if movie_row else None
+    except (TypeError, ValueError):
+        movie_year = None
+
+    # Queries incluem campos OUTPUT_* como fonte secundária
+    dir_rows = _oracle_query("""
+        SELECT d.GENDER  AS GENDER_LLM, o.GENDER   AS GENDER_API,
+               d.RACE, d.NATIONALITY, d.ETHNICITY,
+               d.BIRTHYEAR, o.BIRTHDATE, o.BIRTHLOCATION
+        FROM DIRECTOR d
+        JOIN MOVIE_DIRECTOR md ON d.DIRECTORID = md.DIRECTORID
+        LEFT JOIN OUTPUT_DIRECTOR o ON o.DIRECTORID = d.DIRECTORID
+        WHERE md.MOVIEID = :mid
+    """, {"mid": mid})
+
+    wri_rows = _oracle_query("""
+        SELECT w.GENDER  AS GENDER_LLM, o.GENDER   AS GENDER_API,
+               w.RACE, w.NATIONALITY, w.ETHNICITY,
+               w.BIRTHYEAR, o.BIRTHDATE, o.BIRTHLOCATION
+        FROM WRITER w
+        JOIN MOVIE_WRITER mw ON w.WRITERID = mw.WRITERID
+        LEFT JOIN OUTPUT_WRITER o ON o.WRITERID = w.WRITERID
+        WHERE mw.MOVIEID = :mid
+    """, {"mid": mid})
+
+    cast_rows = _oracle_query("""
+        SELECT NULL AS GENDER_LLM, o.GENDER AS GENDER_API,
+               NULL AS RACE, NULL AS NATIONALITY, NULL AS ETHNICITY,
+               c.BIRTHYEAR, o.BIRTHDATE, o.BIRTHLOCATION
+        FROM CAST c
+        JOIN (SELECT DISTINCT NCONST FROM MOVIE_CAST
+              WHERE IMDBID = (SELECT IMDBID FROM MOVIE_IMDB WHERE MOVIEID = :mid)
+                AND CATEGORY NOT IN ('director', 'writer')) mc ON c.NCONST = mc.NCONST
+        LEFT JOIN OUTPUT_CAST o ON o.NCONST = c.NCONST
+    """, {"mid": mid})
+
+    AGE_BANDS    = ['Under 20', '20-30', '30-40', '40-50', '50-60', '60-70', 'Over 70', 'Unknown']
+    GENDER_ORDER = ['Male', 'Female', 'Unknown']
+    _UNDEF       = {'', 'UNDEFINED', 'UNKNOWN', 'N/A', 'U'}
+
+    def _resolve_gender(r) -> str:
+        """LLM gender (MALE/FEMALE) tem prioridade; API (M/F) como fallback."""
+        llm = (str(r.get('GENDER_LLM') or '')).strip().upper()
+        api = (str(r.get('GENDER_API') or '')).strip().upper()
+        for v in (llm, api):
+            if v in ('MALE',   'M'): return 'Male'
+            if v in ('FEMALE', 'F'): return 'Female'
+        return 'Unknown'
+
+    def _resolve_birthyear(r):
+        """BIRTHYEAR da tabela principal; extrai do BIRTHDATE (OUTPUT) como fallback."""
+        by = r.get('BIRTHYEAR')
+        if by:
+            try: return int(by)
+            except (TypeError, ValueError): pass
+        bd = r.get('BIRTHDATE')
+        if bd is not None:
+            try:
+                return bd.year if hasattr(bd, 'year') else int(str(bd)[:4])
+            except (TypeError, ValueError): pass
+        return None
+
+    def _age_band(birthyear):
+        if not birthyear or not movie_year:
+            return 'Unknown'
+        try:
+            age = int(movie_year) - int(birthyear)
+            if age < 0:  return 'Unknown'
+            if age < 20: return 'Under 20'
+            if age < 30: return '20-30'
+            if age < 40: return '30-40'
+            if age < 50: return '40-50'
+            if age < 60: return '50-60'
+            if age < 70: return '60-70'
+            return 'Over 70'
+        except (TypeError, ValueError):
+            return 'Unknown'
+
+    def _agg(rows):
+        gender = {k: 0 for k in GENDER_ORDER}
+        age    = {b: 0 for b in AGE_BANDS}
+        race, nat, eth = {}, {}, {}
+
+        for r in rows:
+            gender[_resolve_gender(r)]               += 1
+            age[_age_band(_resolve_birthyear(r))]    += 1
+
+            rc = _clean(r.get('RACE'))        or 'Unknown'
+            e  = _clean(r.get('ETHNICITY'))   or 'Unknown'
+
+            n = _clean(r.get('NATIONALITY'))
+            if not n:
+                loc = _clean(r.get('BIRTHLOCATION'))
+                if loc:
+                    n = loc.rsplit(',', 1)[-1].strip()
+            n = n or 'Unknown'
+            race[rc] = race.get(rc, 0) + 1
+            nat[n]   = nat.get(n,   0) + 1
+            eth[e]   = eth.get(e,   0) + 1
+
+        return {
+            "total":       len(rows),
+            "gender":      {k: v for k, v in gender.items() if v},
+            "age":         {k: v for k, v in age.items()    if v},
+            "race":        dict(sorted(race.items(), key=lambda x: -x[1])),
+            "nationality": dict(sorted(nat.items(),  key=lambda x: -x[1])),
+            "ethnicity":   dict(sorted(eth.items(),  key=lambda x: -x[1])),
+        }
+
+    return JSONResponse({
+        "movie_year": movie_year,
+        "director":   _agg(dir_rows),
+        "writer":     _agg(wri_rows),
+        "cast":       _agg(cast_rows),
+    })
+
+
+@app.get("/similar/{movieid}")
+async def similar_movies(movieid: str, page: int = 1, per_page: int = 5):
+    mid = int(movieid)
+    offset = (page - 1) * per_page
+
+    total_rows = _oracle_query(
+        "SELECT COUNT(*) AS CNT FROM ITEM_SIMILARITY WHERE MOVIE_ID = :mid",
+        {"mid": mid},
+    )
+    total = int((total_rows or [{"CNT": 0}])[0]["CNT"])
+
+    rows = _oracle_query("""
+        SELECT i.SIMILAR_MOVIE_ID AS MOVIEID,
+               m.TITLE, m.YEAR, m.GENRE, m.POSTER, m.IMDBID,
+               ml.RATING_ML,
+               i.SIMILARITY
+        FROM ITEM_SIMILARITY i
+        JOIN MOVIE_IMDB m  ON m.MOVIEID  = i.SIMILAR_MOVIE_ID
+        LEFT JOIN MOVIE_ML ml ON ml.MOVIEID = i.SIMILAR_MOVIE_ID
+        WHERE i.MOVIE_ID = :mid
+        ORDER BY i.SIMILARITY DESC
+        OFFSET :off ROWS FETCH NEXT :n ROWS ONLY
+    """, {"mid": mid, "off": offset, "n": per_page})
+
+    movies = [{
+        "id":         str(r["MOVIEID"]),
+        "imdb_id":    _clean(r.get("IMDBID", "")).lower(),
+        "title":      _clean(r.get("TITLE", "")),
+        "year":       _clean(r.get("YEAR", "")),
+        "genre":      _clean(r.get("GENRE", "")),
+        "poster":     _clean(r.get("POSTER", "")),
+        "ml":         f"{float(r['RATING_ML']):.2f}" if r.get("RATING_ML") else "",
+        "similarity": f"{float(r['SIMILARITY']):.4f}" if r.get("SIMILARITY") else "",
+    } for r in rows]
+
+    return JSONResponse({"total": total, "page": page, "per_page": per_page, "movies": movies})
+
+
 @app.get("/status")
 async def status():
     return JSONResponse({"status": "ok"})
@@ -328,7 +489,7 @@ async def movie_detail(movieid: str):
 @app.get("/subtitle-data/{imdbid}/themes")
 async def subtitle_data_themes(imdbid: str):
     rows = _oracle_query(
-        "SELECT IDIOM, THEME, WORD, COUNT, DIALOGUES FROM RS.SUBTITLE_THEME"
+        "SELECT IDIOM, THEME, WORD, COUNT, DIALOGUES FROM SUBTITLE_THEME"
         " WHERE IMDB = :imdb ORDER BY IDIOM, THEME, COUNT DESC",
         {"imdb": imdbid.lower()},
     )
@@ -344,12 +505,12 @@ async def subtitle_data_themes(imdbid: str):
 @app.get("/subtitle-data/{imdbid}/geo")
 async def subtitle_data_geo(imdbid: str):
     rows_en = _oracle_query(
-        "SELECT IDIOM, LOCATION AS ENTITY, COUNT, DIALOGUES FROM RS.SUBTITLE_GEO"
+        "SELECT IDIOM, LOCATION AS ENTITY, COUNT, DIALOGUES FROM SUBTITLE_GEO"
         " WHERE IMDB = :imdb AND IDIOM = 'EN' ORDER BY COUNT DESC",
         {"imdb": imdbid.lower()},
     )
     rows_pt = _oracle_query(
-        "SELECT IDIOM, ENTITY, COUNT, DIALOGUES FROM RS.SUBTITLE_BERT"
+        "SELECT IDIOM, ENTITY, COUNT, DIALOGUES FROM SUBTITLE_BERT"
         " WHERE IMDB = :imdb AND ENTITY_TYPE = 'LOC' ORDER BY COUNT DESC",
         {"imdb": imdbid.lower()},
     )
@@ -364,7 +525,7 @@ async def subtitle_data_geo(imdbid: str):
 @app.get("/subtitle-data/{imdbid}/initcap")
 async def subtitle_data_initcap(imdbid: str):
     rows = _oracle_query(
-        "SELECT IDIOM, WORD, COUNT, DIALOGUES FROM RS.SUBTITLE_INITCAP"
+        "SELECT IDIOM, WORD, COUNT, DIALOGUES FROM SUBTITLE_INITCAP"
         " WHERE IMDB = :imdb ORDER BY IDIOM, COUNT DESC",
         {"imdb": imdbid.lower()},
     )
@@ -379,7 +540,7 @@ async def subtitle_data_initcap(imdbid: str):
 @app.get("/subtitle-data/{imdbid}/regions")
 async def subtitle_data_regions(imdbid: str):
     rows = _oracle_query(
-        "SELECT IDIOM, REGION, WORD, COUNT, DIALOGUES FROM RS.SUBTITLE_REGION"
+        "SELECT IDIOM, REGION, WORD, COUNT, DIALOGUES FROM SUBTITLE_REGION"
         " WHERE IMDB = :imdb ORDER BY IDIOM, REGION, COUNT DESC",
         {"imdb": imdbid.lower()},
     )
@@ -393,11 +554,11 @@ async def subtitle_data_regions(imdbid: str):
 
 
 _MINORITY_TABLES = {
-    "racism":     "RS.SUBTITLE_RACISM",
-    "women":      "RS.SUBTITLE_WOMEN",
-    "xenophobia": "RS.SUBTITLE_XENOPHOBIA",
-    "religion":   "RS.SUBTITLE_RELIGION",
-    "ableism":    "RS.SUBTITLE_ABLEISM",
+    "racism":     "SUBTITLE_RACISM",
+    "women":      "SUBTITLE_WOMEN",
+    "xenophobia": "SUBTITLE_XENOPHOBIA",
+    "religion":   "SUBTITLE_RELIGION",
+    "ableism":    "SUBTITLE_ABLEISM",
 }
 
 

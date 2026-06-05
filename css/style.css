@@ -714,6 +714,111 @@ select:focus {
   font-size: 0.85rem;
 }
 
+/* ── Crew Diversity ─────────────────────────────────────────── */
+.diversity-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin-top: 0.8rem;
+}
+
+.diversity-table thead th {
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--c-muted);
+  padding: 0 1rem 0.6rem;
+  border-bottom: 1.5px solid var(--c-border);
+}
+
+.diversity-table thead th:first-child { width: 100px; padding-left: 0; }
+.diversity-table thead th:not(:first-child) { width: calc((100% - 100px) / 3); }
+
+.diversity-table tbody tr {
+  border-bottom: 1px solid #f0ede8;
+  vertical-align: top;
+}
+
+.div-row-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--c-muted);
+  padding: 0.7rem 0.5rem 0.7rem 0;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.diversity-table tbody td {
+  padding: 0.55rem 1rem;
+}
+
+.div-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.div-chip {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.22rem 0.6rem;
+  border-radius: 20px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+/* Gender */
+.dc-male    { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+.dc-female  { background: #fce7f3; color: #9d174d; border-color: #f9a8d4; }
+.dc-unknown { background: #fdf6ec; color: #92400e; border-color: #e5e7eb; }
+
+/* Age bands — cool → warm */
+.dc-age-u20 { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+.dc-age-20  { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+.dc-age-30  { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
+.dc-age-40  { background: #fefce8; color: #854d0e; border-color: #fde68a; }
+.dc-age-50  { background: #fff7ed; color: #c2410c; border-color: #fdba74; }
+.dc-age-60  { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
+.dc-age-o70 { background: #fef2f2; color: #7f1d1d; border-color: #f87171; }
+
+/* Race / Nationality / Ethnicity */
+.dc-other { background: #f4f4f0; color: var(--c-dark); border-color: #ddd; }
+
+/* ── Similar movies ─────────────────────────────────────────── */
+.similar-table thead th:last-child { width: 130px; }
+
+.sim-cell {
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.sim-bar-wrap {
+  display: inline-block;
+  width: 60px;
+  height: 6px;
+  background: #e8e5e0;
+  border-radius: 3px;
+  vertical-align: middle;
+  margin-right: 0.4rem;
+  overflow: hidden;
+}
+
+.sim-bar {
+  display: block;
+  height: 100%;
+  background: var(--c-dark);
+  border-radius: 3px;
+}
+
+.sim-value {
+  color: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── Crew cards ─────────────────────────────────────────────── */
 .crew-panel {
   padding-top: 1rem;
