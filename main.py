@@ -9,7 +9,6 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO)
 
 import oracledb
-import snowflake.connector
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -44,10 +43,8 @@ app.mount("/css", StaticFiles(directory="css"), name="css")
 app.mount("/js",  StaticFiles(directory="js"),  name="js")
 
 # ---------------------------------------------------------------------------
-# Database connection (Snowflake or Oracle Cloud)
+# Database connection (Oracle Cloud)
 # ---------------------------------------------------------------------------
-
-DB_BACKEND = os.getenv("DB_BACKEND", "snowflake").lower()
 
 _conn = None
 
@@ -57,38 +54,16 @@ def _get_conn():
     if _conn is not None:
         return _conn
 
-    if DB_BACKEND == "oracle":
-        _conn = oracledb.connect(
-            user=os.getenv("ORACLE_USER"),
-            password=os.getenv("ORACLE_PASSWORD"),
-            dsn=os.getenv("ORACLE_DSN"),
-            config_dir=os.getenv("ORACLE_WALLET_DIR"),
-            wallet_location=os.getenv("ORACLE_WALLET_DIR"),
-            wallet_password=os.getenv("ORACLE_WALLET_PASSWORD"),
-        )
-    else:
-        _conn = snowflake.connector.connect(
-            account=os.getenv("SNOWFLAKE_ACCOUNT"),
-            user=os.getenv("SNOWFLAKE_USER"),
-            password=os.getenv("SNOWFLAKE_PASSWORD"),
-            warehouse=os.getenv("SNOWFLAKE_WAREHOUSE"),
-            database=os.getenv("SNOWFLAKE_DATABASE"),
-            schema=os.getenv("SNOWFLAKE_SCHEMA"),
-            role=os.getenv("SNOWFLAKE_ROLE"),
-            autocommit=True,
-        )
+    _conn = oracledb.connect(
+        user=os.getenv("ORACLE_USER"),
+        password=os.getenv("ORACLE_PASSWORD"),
+        dsn=os.getenv("ORACLE_DSN"),
+        config_dir=os.getenv("ORACLE_WALLET_DIR"),
+        wallet_location=os.getenv("ORACLE_WALLET_DIR"),
+        wallet_password=os.getenv("ORACLE_WALLET_PASSWORD"),
+    )
 
     return _conn
-
-
-def _sf_query(sql: str, params=None) -> list[dict]:
-    cur = _get_conn().cursor()
-    try:
-        cur.execute(sql, params or ())
-        cols = [c[0] for c in cur.description] if cur.description else []
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
-    finally:
-        cur.close()
 
 
 def _ml_data_of(movieid: str) -> dict:
@@ -331,26 +306,19 @@ async def crew_diversity(movieid: str):
     cast_rows = _oracle_query("""
         SELECT NULL AS GENDER_LLM, o.GENDER AS GENDER_API,
                NULL AS RACE, NULL AS NATIONALITY, NULL AS ETHNICITY,
-               c.BIRTHYEAR, o.BIRTHDATE, o.BIRTHLOCATION
+               c.BIRTHYEAR, o.BIRTHDATE, o.BIRTHLOCATION,
+               df.GENDER AS DF_GENDER, df.RACE AS DF_RACE
         FROM CAST c
         JOIN (SELECT DISTINCT NCONST FROM MOVIE_CAST
               WHERE IMDBID = (SELECT IMDBID FROM MOVIE_IMDB WHERE MOVIEID = :mid)
                 AND CATEGORY NOT IN ('director', 'writer')) mc ON c.NCONST = mc.NCONST
         LEFT JOIN OUTPUT_CAST o ON o.NCONST = c.NCONST
+        LEFT JOIN DF_GENDER_RACE df ON df.NCONST = c.NCONST
     """, {"mid": mid})
 
     AGE_BANDS    = ['Under 20', '20-30', '30-40', '40-50', '50-60', '60-70', 'Over 70', 'Unknown']
     GENDER_ORDER = ['Male', 'Female', 'Unknown']
     _UNDEF       = {'', 'UNDEFINED', 'UNKNOWN', 'N/A', 'U'}
-
-    def _resolve_gender(r) -> str:
-        """LLM gender (MALE/FEMALE) tem prioridade; API (M/F) como fallback."""
-        llm = (str(r.get('GENDER_LLM') or '')).strip().upper()
-        api = (str(r.get('GENDER_API') or '')).strip().upper()
-        for v in (llm, api):
-            if v in ('MALE',   'M'): return 'Male'
-            if v in ('FEMALE', 'F'): return 'Female'
-        return 'Unknown'
 
     def _resolve_birthyear(r):
         """BIRTHYEAR da tabela principal; extrai do BIRTHDATE (OUTPUT) como fallback."""
@@ -381,17 +349,30 @@ async def crew_diversity(movieid: str):
         except (TypeError, ValueError):
             return 'Unknown'
 
-    def _agg(rows):
+    def _agg(rows, role: str):
         gender = {k: 0 for k in GENDER_ORDER}
         age    = {b: 0 for b in AGE_BANDS}
         race, nat, eth = {}, {}, {}
 
         for r in rows:
-            gender[_resolve_gender(r)]               += 1
-            age[_age_band(_resolve_birthyear(r))]    += 1
+            # Gender resolution
+            if role in ('director', 'writer'):
+                gv = _norm_gender(r.get('GENDER_LLM'))
+            else:  # cast: IMDB first, DeepFace fallback
+                gv = _norm_gender(r.get('GENDER_API'))
+                if gv == 'Unknown':
+                    gv = _norm_gender(r.get('DF_GENDER'))
+            gender[gv] += 1
 
-            rc = _clean(r.get('RACE'))        or 'Unknown'
-            e  = _clean(r.get('ETHNICITY'))   or 'Unknown'
+            age[_age_band(_resolve_birthyear(r))] += 1
+
+            # Race resolution
+            if role in ('director', 'writer'):
+                rc = _clean(r.get('RACE')) or 'Unknown'
+            else:  # cast: DeepFace only
+                rc = _clean(r.get('DF_RACE')) or 'Unknown'
+
+            e = _clean(r.get('ETHNICITY')) or 'Unknown'
 
             n = _clean(r.get('NATIONALITY'))
             if not n:
@@ -414,9 +395,9 @@ async def crew_diversity(movieid: str):
 
     return JSONResponse({
         "movie_year": movie_year,
-        "director":   _agg(dir_rows),
-        "writer":     _agg(wri_rows),
-        "cast":       _agg(cast_rows),
+        "director":   _agg(dir_rows, 'director'),
+        "writer":     _agg(wri_rows, 'writer'),
+        "cast":       _agg(cast_rows, 'cast'),
     })
 
 
@@ -581,39 +562,60 @@ async def minority_data(imdbid: str, topic: str):
     return JSONResponse(result)
 
 
+def _norm_gender(v) -> str:
+    u = (str(v) if v is not None else "").strip().upper()
+    if u in ("MALE",   "M"): return "Male"
+    if u in ("FEMALE", "F"): return "Female"
+    return "Unknown"
+
+
 @app.get("/crew/{movieid}")
 async def crew_detail(movieid: str):
     mid = int(movieid)
 
-    directors = _oracle_query("""
+    _DF_COLS = """
+               df.GENDER          AS DF_GENDER,
+               df.GENDER_MALE     AS DF_GENDER_MALE,  df.GENDER_FEMALE AS DF_GENDER_FEMALE,
+               df.RACE            AS DF_RACE,
+               df.RACE_ASIAN      AS DF_RACE_ASIAN,   df.RACE_INDIAN   AS DF_RACE_INDIAN,
+               df.RACE_BLACK      AS DF_RACE_BLACK,   df.RACE_WHITE    AS DF_RACE_WHITE,
+               df.RACE_MIDDLE_EASTERN AS DF_RACE_ME,  df.RACE_LATINO   AS DF_RACE_LATINO"""
+
+    directors = _oracle_query(f"""
         SELECT d.DIRECTORID AS PERSON_ID,
                d.NAME, d.GENDER AS GENDER_LLM, d.RACE, d.NATIONALITY, d.ETHNICITY, d.RELIGION,
-               o.PRIMARYIMAGEURL, o.GENDER AS GENDER_API, o.BIRTHDATE, o.BIRTHLOCATION, o.BIOGRAPHY
+               o.PRIMARYIMAGEURL, o.BIRTHDATE, o.BIRTHLOCATION, o.BIOGRAPHY,
+               {_DF_COLS}
         FROM DIRECTOR d
         JOIN MOVIE_DIRECTOR md ON d.DIRECTORID = md.DIRECTORID
         LEFT JOIN OUTPUT_DIRECTOR o ON o.DIRECTORID = d.DIRECTORID
+        LEFT JOIN DF_GENDER_RACE df ON df.NCONST = d.DIRECTORID
         WHERE md.MOVIEID = :mid
     """, {"mid": mid})
 
-    writers = _oracle_query("""
+    writers = _oracle_query(f"""
         SELECT w.WRITERID AS PERSON_ID,
                w.NAME, w.GENDER AS GENDER_LLM, w.RACE, w.NATIONALITY, w.ETHNICITY, w.RELIGION,
-               o.PRIMARYIMAGEURL, o.GENDER AS GENDER_API, o.BIRTHDATE, o.BIRTHLOCATION, o.BIOGRAPHY
+               o.PRIMARYIMAGEURL, o.GENDER AS GENDER_API, o.BIRTHDATE, o.BIRTHLOCATION, o.BIOGRAPHY,
+               {_DF_COLS}
         FROM WRITER w
         JOIN MOVIE_WRITER mw ON w.WRITERID = mw.WRITERID
         LEFT JOIN OUTPUT_WRITER o ON o.WRITERID = w.WRITERID
+        LEFT JOIN DF_GENDER_RACE df ON df.NCONST = w.WRITERID
         WHERE mw.MOVIEID = :mid
     """, {"mid": mid})
 
-    cast = _oracle_query("""
+    cast = _oracle_query(f"""
         SELECT c.NCONST AS PERSON_ID,
                c.PRIMARYNAME AS NAME, NULL AS GENDER_LLM, NULL AS RACE, NULL AS NATIONALITY,
                NULL AS ETHNICITY, NULL AS RELIGION,
                o.PRIMARYIMAGEURL, o.GENDER AS GENDER_API, o.BIRTHDATE, o.BIRTHLOCATION, o.BIOGRAPHY,
-               mc.CATEGORY, mc.JOB, mc.CHARACTERS
+               mc.CATEGORY, mc.JOB, mc.CHARACTERS,
+               {_DF_COLS}
         FROM CAST c
         JOIN MOVIE_CAST mc ON c.NCONST = mc.NCONST
         LEFT JOIN OUTPUT_CAST o ON o.NCONST = c.NCONST
+        LEFT JOIN DF_GENDER_RACE df ON df.NCONST = c.NCONST
         WHERE mc.IMDBID = (SELECT IMDBID FROM MOVIE_IMDB WHERE MOVIEID = :mid)
           AND mc.CATEGORY NOT IN ('director', 'writer')
         ORDER BY mc.ORDERING
@@ -677,29 +679,68 @@ async def crew_detail(movieid: str):
             result.append(entry)
         return result
 
-    def normalize(rows: list[dict]) -> list[dict]:
-        return [{
-            "person_id":     _clean(r.get("PERSON_ID")),
-            "name":          _clean(r.get("NAME")),
-            "gender_llm":    _clean(r.get("GENDER_LLM")),
-            "gender_api":    _clean(r.get("GENDER_API")),
-            "race":          _clean(r.get("RACE")),
-            "nationality":   _clean(r.get("NATIONALITY")),
-            "ethnicity":     _clean(r.get("ETHNICITY")),
-            "religion":      _clean(r.get("RELIGION")),
-            "photo":         _clean(r.get("PRIMARYIMAGEURL")),
-            "birthdate":     _clean(r.get("BIRTHDATE")),
-            "birthlocation": _clean(r.get("BIRTHLOCATION")),
-            "biography":     _clean(_read_lob(r.get("BIOGRAPHY"))),
-            "category":      _clean(r.get("CATEGORY")),
-            "job":           _clean(r.get("JOB")),
-            "characters":    _clean(r.get("CHARACTERS")),  # já parseado por _dedupe_cast
-        } for r in rows]
+    def _deepface_data(r) -> dict | None:
+        dg = _clean(r.get("DF_GENDER") or "")
+        if not dg:
+            return None
+        def _pct(col):
+            try: return round(float(r.get(col) or 0), 1)
+            except: return 0.0
+        dr = _clean(r.get("DF_RACE") or "")
+        return {
+            "gender":        _norm_gender(dg),
+            "gender_male":   _pct("DF_GENDER_MALE"),
+            "gender_female": _pct("DF_GENDER_FEMALE"),
+            "race":          dr.capitalize() if dr else "",
+            "race_weights": {
+                "Asian":          _pct("DF_RACE_ASIAN"),
+                "Indian":         _pct("DF_RACE_INDIAN"),
+                "Black":          _pct("DF_RACE_BLACK"),
+                "White":          _pct("DF_RACE_WHITE"),
+                "Middle Eastern": _pct("DF_RACE_ME"),
+                "Latino":         _pct("DF_RACE_LATINO"),
+            },
+        }
+
+    def normalize(rows: list[dict], role: str) -> list[dict]:
+        result = []
+        for r in rows:
+            df = _deepface_data(r)
+            gender_sources = []
+            if role in ("director", "writer"):
+                gender_sources.append({"source": "LLM",  "value": _norm_gender(r.get("GENDER_LLM"))})
+            if role in ("writer", "cast"):
+                gender_sources.append({"source": "IMDB", "value": _norm_gender(r.get("GENDER_API"))})
+            if df:
+                gender_sources.append({
+                    "source":     "DeepFace",
+                    "value":      df["gender"],
+                    "male_pct":   df["gender_male"],
+                    "female_pct": df["gender_female"],
+                })
+            result.append({
+                "person_id":      _clean(r.get("PERSON_ID")),
+                "name":           _clean(r.get("NAME")),
+                "gender_sources": gender_sources,
+                "deepface_race":  {"value": df["race"], "weights": df["race_weights"]} if df and df["race"] else None,
+                "race":           _clean(r.get("RACE")),
+                "nationality":    _clean(r.get("NATIONALITY")),
+                "ethnicity":      _clean(r.get("ETHNICITY")),
+                "religion":       _clean(r.get("RELIGION")),
+                "photo":          _clean(r.get("PRIMARYIMAGEURL")),
+                "birthdate":      _clean(r.get("BIRTHDATE")),
+                "birthlocation":  _clean(r.get("BIRTHLOCATION")),
+                "biography":      _clean(_read_lob(r.get("BIOGRAPHY"))),
+                "category":       _clean(r.get("CATEGORY")),
+                "job":            _clean(r.get("JOB")),
+                "characters":     _clean(r.get("CHARACTERS")),
+            })
+        return result
 
     return JSONResponse({
-        "directors": normalize(directors),
-        "writers":   normalize(writers),
-        "cast":      normalize(_dedupe_cast(cast)),
+        "directors": normalize(directors,          "director"),
+        "writers":   normalize(writers,            "writer"),
+        "cast":      normalize(_dedupe_cast(cast), "cast"),
     })
 
 

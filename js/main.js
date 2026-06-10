@@ -503,6 +503,14 @@ function _renderSimilarPagination(total, page) {
 
 // ── Crew Detail ──────────────────────────────────────────────────────────────
 
+function _weightsTooltip(weights) {
+  return Object.entries(weights)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}: ${v}%`)
+    .join(' · ');
+}
+
 const CREW_TABS = ['crewDirectors', 'crewWriters', 'crewCast'];
 
 const PERSON_PLACEHOLDER = `data:image/svg+xml,${encodeURIComponent(
@@ -546,20 +554,75 @@ function _buildCrewCard(person, horizontal = false) {
   info.appendChild(nameEl);
 
   const FIELDS = [
-    ['Category',     person.category],
-    ['Job',          person.job],
-    ['Characters',   person.characters],
-    ['Gender (LLM)', person.gender_llm],
-    ['Gender (API)', person.gender_api],
-    ['Nationality',  person.nationality],
-    ['Race',         person.race],
-    ['Ethnicity',    person.ethnicity],
-    ['Religion',     person.religion],
-    ['Born',         [person.birthdate, person.birthlocation].filter(Boolean).join(' · ')],
+    ['Category',   person.category],
+    ['Job',        person.job],
+    ['Characters', person.characters],
+    ['Nationality', person.nationality],
+    ['Ethnicity',   person.ethnicity],
+    ['Religion',    person.religion],
+    ['Born',        [person.birthdate, person.birthlocation].filter(Boolean).join(' · ')],
   ];
 
   const fieldsGrid = document.createElement('div');
   fieldsGrid.className = 'crew-fields';
+
+  // Gender — multi-source: "Gender (LLM | IMDB | DeepFace): Male | Female | Male"
+  const srcs = person.gender_sources || [];
+  if (srcs.length > 0) {
+    const gRow = document.createElement('div');
+    gRow.className = 'crew-field';
+    const gLbl = document.createElement('span');
+    gLbl.className   = 'crew-field-label';
+    gLbl.textContent = `Gender (${srcs.map(s => s.source).join(' | ')})`;
+    const gVal = document.createElement('span');
+    gVal.className = 'crew-field-value';
+    srcs.forEach((src, i) => {
+      if (i > 0) gVal.append(' | ');
+      if (src.source === 'DeepFace' && (src.male_pct > 0 || src.female_pct > 0)) {
+        const span = document.createElement('span');
+        span.className   = 'df-has-tooltip';
+        span.textContent = src.value;
+        span.title       = `Male: ${src.male_pct}% · Female: ${src.female_pct}%`;
+        gVal.appendChild(span);
+      } else {
+        gVal.append(src.value);
+      }
+    });
+    gRow.appendChild(gLbl);
+    gRow.appendChild(gVal);
+    fieldsGrid.appendChild(gRow);
+  }
+
+  // Race — LLM (director/writer) e/ou DeepFace
+  const hasRaceLlm = !!person.race;
+  const hasRaceDf  = !!(person.deepface_race && person.deepface_race.value);
+  if (hasRaceLlm || hasRaceDf) {
+    const raceRow = document.createElement('div');
+    raceRow.className = 'crew-field';
+    const raceLbl = document.createElement('span');
+    raceLbl.className = 'crew-field-label';
+    if (hasRaceLlm && hasRaceDf)      raceLbl.textContent = 'Race (LLM | DeepFace)';
+    else if (hasRaceLlm)              raceLbl.textContent = 'Race';
+    else                              raceLbl.textContent = 'Race (DeepFace)';
+    const raceVal = document.createElement('span');
+    raceVal.className = 'crew-field-value';
+    if (hasRaceLlm) {
+      raceVal.append(person.race);
+    }
+    if (hasRaceLlm && hasRaceDf) {
+      raceVal.append(' | ');
+    }
+    if (hasRaceDf) {
+      const dfSpan = document.createElement('span');
+      dfSpan.className   = 'df-has-tooltip';
+      dfSpan.textContent = person.deepface_race.value;
+      dfSpan.title       = _weightsTooltip(person.deepface_race.weights);
+      raceVal.appendChild(dfSpan);
+    }
+    raceRow.appendChild(raceLbl);
+    raceRow.appendChild(raceVal);
+    fieldsGrid.appendChild(raceRow);
+  }
 
   FIELDS.forEach(([label, value]) => {
     if (!value) return;

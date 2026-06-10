@@ -939,6 +939,12 @@ select:focus {
 
 .bio-expand-btn:hover { text-decoration: underline; }
 
+.df-has-tooltip {
+  cursor: help;
+  text-decoration: underline dotted var(--c-muted);
+  text-underline-offset: 3px;
+}
+
 /* ── Subtitle raw SRT ────────────────────────────────────────── */
 #subtitleRawText {
   width: 100%;
